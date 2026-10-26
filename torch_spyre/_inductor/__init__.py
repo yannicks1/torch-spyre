@@ -183,9 +183,20 @@ def enable_spyre_compile_fx_wrapper():
                         # The outermost region of one Spyre compile: every other
                         # timed region nests inside it, so a frontend total is
                         # this minus the per-kernel backend calls.
+                        from . import offset_rebase
+
+                        rebased = offset_rebase.select_inputs(gm, example_inputs)
+                        offset_rebase.record(example_inputs, rebased)
+                        real_inputs = offset_rebase.rebase(example_inputs, rebased)
                         with timing_recorder.stage("stage:compile_fx:spyre_compile"):
-                            with enable_spyre_context(example_inputs):
-                                return _orig(gm, example_inputs, *args, **kwargs)
+                            with (
+                                enable_spyre_context(real_inputs),
+                                offset_rebase.lowering_at_offset_zero(rebased),
+                            ):
+                                compiled = _orig(gm, example_inputs, *args, **kwargs)
+                        if rebased:
+                            compiled = offset_rebase.wrap_compiled(compiled, rebased)
+                        return compiled
                     finally:
                         _compile_state.in_spyre_compile = _prev_in_spyre
 

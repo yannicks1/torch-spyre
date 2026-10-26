@@ -375,6 +375,27 @@ def _patch_tensor_for_spyre():
         # add lambda guard on tensor's child manager
         # same node as TENSOR_MATCH!
         tensor_guard_manager = self.get_guard_manager(guard)
+        from torch_spyre._inductor import offset_rebase
+
+        if offset_rebase.was_rebased(value):
+            # The compile passed this input rebased, so its offset is bound at
+            # launch: any offset that can still be rebased reuses the graph.
+            from torch_spyre._C import is_rebasable_offset_view
+
+            tensor_guard_manager.add_lambda_guard(
+                lambda x: (
+                    x.device.type != DEVICE_NAME
+                    or (
+                        x.device_tensor_layout() == expected_layout
+                        and (x.storage_offset() == 0 or is_rebasable_offset_view(x))
+                    )
+                ),
+                [
+                    f"SpyreTensorLayout({guard.name}) == {expected_layout} and storage_offset rebasable"
+                ],
+                guard.user_stack,
+            )
+            return
         tensor_guard_manager.add_lambda_guard(
             lambda x: (
                 x.device.type != DEVICE_NAME

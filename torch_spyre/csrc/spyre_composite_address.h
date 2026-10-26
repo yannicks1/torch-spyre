@@ -112,4 +112,20 @@ flex::CompositeAddress* get_composite_address(const at::Tensor& tensor);
 // binding exposes this under the plain name "get_composite_address".
 CompositeAddressHandle get_composite_address_handle(const at::Tensor& tensor);
 
+// Byte offset into `tensor`'s device allocation at which its storage_offset
+// starts, or -1 when that offset is not a whole-stick address shift (it lands
+// inside a stick, or the allocation has several chunks).
+int64_t rebase_offset_bytes(const at::Tensor& tensor);
+
+// True if `tensor` has a nonzero storage_offset that rebase_offset_view can
+// remove.
+bool is_rebasable_offset_view(const at::Tensor& tensor);
+
+// An alias of `tensor` with storage_offset 0 and no view base: same sizes,
+// strides and device layout, over a storage that starts at the view's first
+// element and keeps the original storage alive. A compiled kernel then needs
+// no baked offset to read it. Returns `tensor` itself when its offset cannot be
+// rebased.
+at::Tensor rebase_offset_view(const at::Tensor& tensor);
+
 }  // namespace spyre

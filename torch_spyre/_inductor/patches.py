@@ -15,6 +15,7 @@
 from contextlib import contextmanager
 from functools import wraps
 
+import sympy
 import torch
 from torch._inductor.graph import GraphLowering
 from torch._inductor.ir import (
@@ -27,7 +28,7 @@ from torch._inductor.scheduler import SchedulerNode
 from torch._inductor.utils import InputType
 from torch._inductor.virtualized import V
 
-from . import pass_counters
+from . import offset_rebase, pass_counters
 from .constants import DEVICE_NAME
 
 
@@ -84,6 +85,11 @@ def _preserve_spyre_input_storage_offsets():
             return result
 
         name = self.graph_input_names[-1]
+        if offset_rebase.zero_offset(
+            self, self.placeholder_idx, self.current_node.meta.get("val")
+        ):
+            # Bound at launch instead: the call passes an offset-0 alias.
+            self.graph_input_storage_offsets[name] = sympy.S.Zero
         input_buffer.layout = FixedLayout(
             layout.device,
             layout.dtype,

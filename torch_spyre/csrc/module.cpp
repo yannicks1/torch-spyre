@@ -517,6 +517,14 @@ PYBIND11_MODULE(_C, m) {
         "Return a read-only handle over the device address backing a Spyre "
         "tensor's storage; the handle keeps that allocation alive",
         py::arg("tensor"));
+  m.def("is_rebasable_offset_view", &spyre::is_rebasable_offset_view,
+        "True if a nonzero storage_offset can be removed by rebasing the view "
+        "onto a whole-stick shift of its allocation",
+        py::arg("tensor"));
+  m.def("rebase_offset_view", &spyre::rebase_offset_view,
+        "Alias of a rebasable offset view with storage_offset 0, so a compiled "
+        "kernel can read it without baking the offset; else the tensor itself",
+        py::arg("tensor"));
 
   // Stream management functions
   m.def("get_stream_from_pool", &spyre::getStreamFromPool, py::arg("device"),

@@ -35,6 +35,12 @@ def _backend_loop_unroll_from_env() -> bool:
 # Resolve at import like the other options; config.patch can override it.
 backend_loop_unroll: bool = _backend_loop_unroll_from_env()
 
+# Pass a graph input view whose storage_offset is a whole-stick shift as an
+# offset-0 alias of its allocation instead of baking the offset into the kernel,
+# so views that differ only by offset share one compiled graph
+# (_inductor/offset_rebase.py). Set SPYRE_REBASE_OFFSET_INPUTS=0 to disable.
+rebase_offset_inputs: bool = os.environ.get("SPYRE_REBASE_OFFSET_INPUTS", "1") == "1"
+
 lx_planning: bool = os.environ.get("LX_PLANNING", "1") == "1"
 co_optimizing_lx_planning: bool = (
     os.environ.get("CO_OPTIMIZING_LX_PLANNING", "1") == "1"
