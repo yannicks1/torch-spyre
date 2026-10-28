@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from torch._prims_common import is_non_overlapping_and_dense_or_false
 from torch_spyre._C import fill_tensor, copy_tensor, SpyreTensorLayout
 import torch_spyre.ops.fallbacks  # noqa: F401
 from .fallbacks import _get_op_overloads
@@ -723,8 +724,8 @@ def _row_index(self, indices):
 
     Only one 1-D integer index on dim 0 is supported (row selection, e.g. the
     sampled rows of a decoder's hidden states). The index is bounds-checked and
-    its negative entries wrapped on the host, as eager CPU indexing does, except
-    for an int32 index already on Spyre, which is used as-is to avoid a D2H.
+    its negative entries wrapped on the host, as eager CPU indexing does, so an
+    index already on Spyre takes a D2H round trip.
     """
     if (
         len(indices) != 1
@@ -736,27 +737,46 @@ def _row_index(self, indices):
             "Spyre aten::index.Tensor supports only x[index] with a single 1-D "
             "int32/int64 index tensor on dim 0"
         )
+    index = indices[0]
+    if index.device.type != "cpu" and index.device != self.device:
+        raise RuntimeError(
+            "indices should be either on cpu or on the same device as the "
+            f"indexed tensor ({self.device})"
+        )
     if self.dim() == 0:
         raise IndexError("too many indices for tensor of dimension 0")
-    index = indices[0]
-    if index.device.type == "spyre":
-        if index.dtype == torch.int32:
-            return index
-        index = index.to("cpu")
+    index = index.cpu()
     rows = self.shape[0]
-    if index.numel() and (index.min() < -rows or index.max() >= rows):
-        raise IndexError(f"index out of range for dimension 0 with size {rows}")
-    index = torch.where(index < 0, index + rows, index)
+    if index.numel():
+        low = index.min()
+        if low < -rows or index.max() >= rows:
+            raise IndexError(f"index out of range for dimension 0 with size {rows}")
+        if low < 0:
+            index = torch.where(index < 0, index + rows, index)
     # Spyre has no int64 index kernel.
     return index.to(torch.int32).to(self.device)
+
+
+def _overlaps(a, b):
+    """Whether ``a`` and ``b`` share a memory location, as ``at::assert_no_overlap``
+    decides it: only two dense views of one storage are compared, by extent.
+    """
+    if a.untyped_storage().data_ptr() != b.untyped_storage().data_ptr():
+        return False
+    dense = is_non_overlapping_and_dense_or_false
+    if not (dense(a) and dense(b)):
+        return False
+    a_start, b_start = a.storage_offset(), b.storage_offset()
+    return a_start < b_start + b.numel() and b_start < a_start + a.numel()
 
 
 @torch.library.register_kernel("aten::index.Tensor", ["spyre"])  # type:ignore
 def spyre__index_tensor(self, indices):
     """``self[index]`` for a 1-D integer index, as an ``index_select`` on dim 0.
 
-    ``index_select`` compiles once per index length (``dynamic=False``), so a
-    caller that sees many lengths should pad the index onto a fixed set of them.
+    ``index_select`` compiles once per index length and source shape and layout
+    (``dynamic=False``), so a caller that sees many lengths should pad the index
+    onto a fixed set of them.
     """
     index = _row_index(self, indices)
     if index.numel() == 0:
@@ -770,6 +790,21 @@ def spyre__index_tensor(self, indices):
 
 @torch.library.register_kernel("aten::index.Tensor_out", ["spyre"])  # type:ignore
 def spyre__index_tensor_out(self, indices, *, out):
+    if out.dtype != self.dtype:
+        raise RuntimeError(
+            f"index_out: self ({self.dtype}) and result ({out.dtype}) must have "
+            "the same scalar type"
+        )
+    if out.device != self.device:
+        raise RuntimeError(
+            f"Expected out tensor to have device {self.device}, but got {out.device}"
+        )
+    if any(_overlaps(out, t) for t in (self, *indices) if t is not None):
+        raise RuntimeError(
+            "unsupported operation: some elements of the input tensor and the "
+            "written-to tensor refer to a single memory location. Please clone() "
+            "the tensor before performing the operation."
+        )
     result = aten.index.Tensor(self, indices)
     if out.shape != result.shape:
         out.resize_(result.shape)

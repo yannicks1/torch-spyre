@@ -55,17 +55,40 @@ def test_gathers_the_indexed_rows(source, rows, dtype, index_device):
     torch.testing.assert_close(got.cpu(), x[index], atol=0, rtol=0)
 
 
-def test_negative_cpu_indices_wrap(source):
+@pytest.mark.parametrize("index_device", ["cpu", DEVICE])
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
+def test_negative_indices_wrap(source, dtype, index_device):
     x, dx = source
-    index = torch.tensor([-1, 0, -ROWS])
+    index = torch.tensor([-1, 0, -ROWS], dtype=dtype)
 
-    torch.testing.assert_close(dx[index].cpu(), x[index], atol=0, rtol=0)
+    got = dx[index.to(index_device)]
+
+    torch.testing.assert_close(got.cpu(), x[index], atol=0, rtol=0)
 
 
-def test_out_of_range_cpu_index_raises(source):
+@pytest.mark.parametrize("index_device", ["cpu", DEVICE])
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("rows", [[0, ROWS], [-ROWS - 1]], ids=str)
+def test_out_of_range_index_raises(source, rows, dtype, index_device):
     _, dx = source
     with pytest.raises(IndexError, match="out of range"):
-        dx[torch.tensor([0, ROWS])]
+        dx[torch.tensor(rows, dtype=dtype, device=index_device)]
+
+
+@pytest.mark.parametrize("index_device", ["cpu", DEVICE])
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("row", [1, -2])
+def test_out_of_range_index_into_one_row_source_raises(row, dtype, index_device):
+    _, dx = _to_device(torch.randn(1, HIDDEN, dtype=DTYPE))
+    with pytest.raises(IndexError, match="out of range"):
+        dx[torch.tensor([row], dtype=dtype, device=index_device)]
+
+
+def test_spyre_index_into_cpu_source_raises():
+    x = torch.randn(8, 64, dtype=DTYPE)
+    index = torch.tensor([0, 1], device=DEVICE)
+    with pytest.raises(RuntimeError, match="indices should be either on cpu"):
+        torch.ops.aten.index.Tensor(x, [index])
 
 
 def test_empty_index_returns_no_rows(source):
@@ -108,6 +131,41 @@ def test_out_variant(source):
     torch.ops.aten.index.Tensor_out(dx, [index], out=out)
 
     torch.testing.assert_close(out.cpu(), x[index], atol=0, rtol=0)
+
+
+def test_out_variant_into_disjoint_view_of_the_source_storage(source):
+    _, dx = source
+    base = dx.clone()
+    src, out = base[:64], base[64:66]
+    expected = src.cpu()[torch.tensor([4, 2])]
+
+    torch.ops.aten.index.Tensor_out(src, [torch.tensor([4, 2])], out=out)
+
+    torch.testing.assert_close(out.cpu(), expected, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize(
+    "make_out, match",
+    [
+        pytest.param(
+            lambda dx: torch.empty(2, HIDDEN, dtype=torch.int32, device=DEVICE),
+            "same scalar type",
+            id="dtype",
+        ),
+        pytest.param(
+            lambda dx: torch.empty(2, HIDDEN, dtype=DTYPE),
+            "Expected out tensor to have device",
+            id="cpu",
+        ),
+        pytest.param(lambda dx: dx[:2], "single memory location", id="overlap"),
+    ],
+)
+def test_out_variant_rejects_an_invalid_out(make_out, match):
+    x, dx = _to_device(torch.randn(8, 64, dtype=DTYPE))
+    out = make_out(dx)
+    with pytest.raises(RuntimeError, match=match):
+        torch.ops.aten.index.Tensor_out(dx, [torch.tensor([4, 2])], out=out)
+    torch.testing.assert_close(dx.cpu(), x, atol=0, rtol=0)
 
 
 @pytest.mark.parametrize(
