@@ -132,6 +132,7 @@ dot-product attention, the [RMS norm example](https://github.com/torch-spyre/tor
 | **Indexing** | | | | |
 | `torch.embedding` | Y | Y | Spyre | Registered on the compiled path (`ops/eager.py`) |
 | `torch.index_select` | Y | Y | Spyre | Registered on the compiled path (`ops/eager.py`) |
+| `x[index]` (`aten.index.Tensor`) | Y | Y | Spyre | Eager supports one 1-D int32/int64 index on dim 0 (CPU or Spyre), run as `index_select`; other index forms raise `NotImplementedError`. Compiles once per index length |
 | `torch.index_add` | | Y | Spyre | Compiled only; custom decomposition (gather + add + overwrite-scatter); requires unique indices |
 | `torch.masked_scatter` | Y | Y | Spyre | Custom decomposition; supported for masks that broadcast along the last (stick) dimension, other masks raise `Unsupported` |
 | **Utility** | | | | |
